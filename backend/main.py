@@ -5,10 +5,9 @@ from sqlalchemy.orm import Session
 from typing import List, Optional
 from datetime import datetime, timedelta, date
 import jwt
-from jwt import PyJWTError
-
-from . import crud, models, schemas
-from .database import SessionLocal, engine, get_db
+from jwt import InvalidTokenError, DecodeError, ExpiredSignatureError
+import crud, models, schemas
+from database import SessionLocal, engine, get_db
 
 # Create tables
 models.Base.metadata.create_all(bind=engine)
@@ -52,7 +51,7 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
         user_id: str = payload.get("sub")
         if user_id is None:
             raise credentials_exception
-    except PyJWTError:
+    except (InvalidTokenError, DecodeError, ExpiredSignatureError):
         raise credentials_exception
     
     user = crud.get_user(db, user_id=user_id)

@@ -139,14 +139,27 @@ function appReducer(state: AppState, action: any): AppState {
         p.userId === action.payload.userId
       );
       
-      // Auto-set start date when status changes to IN_PROGRESS
-      if (action.payload.status === 'IN_PROGRESS' && !action.payload.startDate) {
+      // Auto-set start date when status changes to IN_PROGRESS (only if not already set)
+      if (action.payload.status === 'IN_PROGRESS' && !action.payload.startDate && !existingProgress?.startDate) {
         action.payload.startDate = new Date();
+      } else if (existingProgress?.startDate && !action.payload.startDate) {
+        action.payload.startDate = existingProgress.startDate;
       }
       
-      // Auto-set completion date when status changes to COMPLETED
-      if (action.payload.status === 'COMPLETED' && !action.payload.completionDate) {
+      // Auto-set completion date when status changes to COMPLETED (only if not already set)
+      if (action.payload.status === 'COMPLETED' && !action.payload.completionDate && !existingProgress?.completionDate) {
         action.payload.completionDate = new Date();
+      } else if (existingProgress?.completionDate && !action.payload.completionDate) {
+        action.payload.completionDate = existingProgress.completionDate;
+      }
+      
+      // Preserve other existing properties
+      if (existingProgress) {
+        action.payload = {
+          ...existingProgress,
+          ...action.payload,
+          id: existingProgress.id
+        };
       }
       
       if (existingProgress) {

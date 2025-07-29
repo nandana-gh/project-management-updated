@@ -1,6 +1,6 @@
 from sqlalchemy.orm import Session
 from sqlalchemy import and_
-from . import models, schemas
+import models, schemas
 from datetime import datetime, date
 import uuid
 from passlib.context import CryptContext

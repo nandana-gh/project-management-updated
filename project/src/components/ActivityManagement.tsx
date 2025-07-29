@@ -29,6 +29,44 @@ export function ActivityManagement() {
   const [newActivity, setNewActivity] = useState({ name: '' });
   const [selectedProject, setSelectedProject] = useState<string>('');
   const [selectedSubsystem, setSelectedSubsystem] = useState<string>('');
+  const [editingDates, setEditingDates] = useState<{[key: string]: boolean}>({});
+  const [tempDates, setTempDates] = useState<{[key: string]: {startDate?: string, completionDate?: string}}>({});
+
+  const handleDateUpdate = (activityId: string, projectId: string, subsystemId: string, dateType: 'startDate' | 'completionDate', dateValue: string) => {
+    const existingProgress = state.progress.find(p => 
+      p.projectId === projectId &&
+      p.subsystemId === subsystemId &&
+      p.activityId === activityId &&
+      p.userId === state.auth.user?.id
+    );
+
+    const progress: ProjectProgress = {
+      projectId,
+      subsystemId,
+      activityId,
+      userId: state.auth.user?.id || '',
+      status: existingProgress?.status || 'NOT_STARTED',
+      startDate: dateType === 'startDate' ? new Date(dateValue) : existingProgress?.startDate,
+      completionDate: dateType === 'completionDate' ? new Date(dateValue) : existingProgress?.completionDate
+    };
+
+    // Auto-update status based on dates
+    if (dateType === 'startDate' && dateValue && progress.status === 'NOT_STARTED') {
+      progress.status = 'IN_PROGRESS';
+    }
+    if (dateType === 'completionDate' && dateValue) {
+      progress.status = 'COMPLETED';
+    }
+
+    dispatch({ type: 'UPDATE_PROGRESS', payload: progress });
+  };
+
+  const toggleDateEdit = (activityKey: string) => {
+    setEditingDates(prev => ({
+      ...prev,
+      [activityKey]: !prev[activityKey]
+    }));
+  };
 
   const userRole = state.auth.user?.role;
   const canAdd = userRole === 'PM' || userRole === 'ENGINEER';
@@ -52,13 +90,21 @@ export function ActivityManagement() {
   };
 
   const handleStatusUpdate = (activityId: string, projectId: string, subsystemId: string, newStatus: 'NOT_STARTED' | 'IN_PROGRESS' | 'COMPLETED') => {
+    const existingProgress = state.progress.find(p => 
+      p.projectId === projectId &&
+      p.subsystemId === subsystemId &&
+      p.activityId === activityId &&
+      p.userId === state.auth.user?.id
+    );
+
     const progress: ProjectProgress = {
       projectId,
       subsystemId,
       activityId,
       userId: state.auth.user?.id || '',
       status: newStatus,
-      completionDate: newStatus === 'COMPLETED' ? new Date() : undefined
+      startDate: newStatus === 'IN_PROGRESS' && !existingProgress?.startDate ? new Date() : existingProgress?.startDate,
+      completionDate: newStatus === 'COMPLETED' ? new Date() : existingProgress?.completionDate
     };
 
     dispatch({ type: 'UPDATE_PROGRESS', payload: progress });
@@ -296,36 +342,92 @@ export function ActivityManagement() {
                             </span>
                           </div>
                           
-                          {progress?.completionDate && (
-                            <p className="text-sm text-gray-600">
-                              Completed: {new Date(progress.completionDate).toLocaleDateString()}
-                            </p>
-                          )}
-                          
-                          {progress?.startDate && (
-                            <p className="text-sm text-gray-600">
-                              Started: {new Date(progress.startDate).toLocaleDateString()}
-                            </p>
-                          )}
+                          <div className="space-y-2">
+                            {progress?.startDate && (
+                              <div className="flex items-center justify-between">
+                                <p className="text-sm text-gray-600">
+                                  Started: {new Date(progress.startDate).toLocaleDateString()}
+                                </p>
+                                {canEdit && (
+                                  <input
+                                    type="date"
+                                    value={new Date(progress.startDate).toISOString().split('T')[0]}
+                                    onChange={(e) => handleDateUpdate(activity.id, selectedProject, selectedSubsystem, 'startDate', e.target.value)}
+                                    className="px-2 py-1 border border-gray-300 rounded text-xs focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                                  />
+                                )}
+                              </div>
+                            )}
+                            
+                            {progress?.completionDate && (
+                              <div className="flex items-center justify-between">
+                                <p className="text-sm text-gray-600">
+                                  Completed: {new Date(progress.completionDate).toLocaleDateString()}
+                                </p>
+                                {canEdit && (
+                                  <input
+                                    type="date"
+                                    value={new Date(progress.completionDate).toISOString().split('T')[0]}
+                                    onChange={(e) => handleDateUpdate(activity.id, selectedProject, selectedSubsystem, 'completionDate', e.target.value)}
+                                    className="px-2 py-1 border border-gray-300 rounded text-xs focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                                  />
+                                )}
+                              </div>
+                            )}
+                            
+                            {/* Show date inputs for setting dates when not set */}
+                            {!progress?.startDate && status !== 'NOT_STARTED' && canEdit && (
+                              <div className="flex items-center gap-2">
+                                <label className="text-xs text-gray-600">Start Date:</label>
+                                <input
+                                  type="date"
+                                  onChange={(e) => {
+                                    if (e.target.value) {
+                                      handleDateUpdate(activity.id, selectedProject, selectedSubsystem, 'startDate', e.target.value);
+                                    }
+                                  }}
+                                  className="px-2 py-1 border border-gray-300 rounded text-xs focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                                />
+                              </div>
+                            )}
+                            
+                            {!progress?.completionDate && status === 'COMPLETED' && canEdit && (
+                              <div className="flex items-center gap-2">
+                                <label className="text-xs text-gray-600">Completion Date:</label>
+                                <input
+                                  type="date"
+                                  onChange={(e) => {
+                                    if (e.target.value) {
+                                      handleDateUpdate(activity.id, selectedProject, selectedSubsystem, 'completionDate', e.target.value);
+                                    }
+                                  }}
+                                  className="px-2 py-1 border border-gray-300 rounded text-xs focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                                />
+                              </div>
+                            )}
+                          </div>
                         </div>
                         
                         <div className="flex flex-col gap-2">
-                          {status === 'NOT_STARTED' && (
-                            <input
-                              type="date"
-                              placeholder="Start Date"
-                              className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                              onChange={(e) => {
-                                if (e.target.value) {
-                                  handleStatusUpdate(
-                                    activity.id,
-                                    selectedProject,
-                                    selectedSubsystem,
-                                    'IN_PROGRESS'
-                                  );
-                                }
-                              }}
-                            />
+                          {status === 'NOT_STARTED' && canEdit && (
+                            <div className="flex items-center gap-2">
+                              <input
+                                type="date"
+                                placeholder="Start Date"
+                                className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                                onChange={(e) => {
+                                  if (e.target.value) {
+                                    handleDateUpdate(activity.id, selectedProject, selectedSubsystem, 'startDate', e.target.value);
+                                  }
+                                }}
+                              />
+                              <button
+                                onClick={() => handleStatusUpdate(activity.id, selectedProject, selectedSubsystem, 'IN_PROGRESS')}
+                                className="px-3 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 transition-colors"
+                              >
+                                Start
+                              </button>
+                            </div>
                           )}
                           
                           <select

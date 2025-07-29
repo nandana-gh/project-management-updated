@@ -262,7 +262,7 @@ export function Reports() {
       },
       scales: chartData.type === 'bar' ? {
         y: {
-          beginAtZero: true,
+          beginAtZero: false,
           max: 100,
           ticks: {
             callback: function(value: any) {
@@ -303,15 +303,75 @@ export function Reports() {
       );
     }
     
-    // Calculate timeline bounds from completion dates
-    const completionDates = activitiesWithDates.map(p => new Date(p.completionDate!));
-    const minDate = new Date(Math.min(...completionDates.map(d => d.getTime())));
-    const maxDate = new Date(Math.max(...completionDates.map(d => d.getTime())));
-    const totalDays = Math.ceil((maxDate.getTime() - minDate.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+    // Calculate timeline bounds - separate actual and estimated dates for better timeline
+    const actualDates: Date[] = [];
+    const estimatedDates: Date[] = [];
     
-    // Sort activities by completion date
+    activitiesWithDates.forEach(p => {
+      try {
+        if (p.completionDate) {
+          const completionDate = new Date(p.completionDate);
+          if (!isNaN(completionDate.getTime())) {
+            actualDates.push(completionDate);
+          }
+        }
+        if (p.startDate) {
+          const startDate = new Date(p.startDate);
+          if (!isNaN(startDate.getTime())) {
+            actualDates.push(startDate);
+          }
+        } else if (p.completionDate) {
+          // Only add estimated dates if no actual start date exists
+          const completionDate = new Date(p.completionDate);
+          if (!isNaN(completionDate.getTime())) {
+            estimatedDates.push(new Date(completionDate.getTime() - 7 * 24 * 60 * 60 * 1000));
+          }
+        }
+      } catch (error) {
+        console.warn('Invalid date found in progress data:', p);
+      }
+    });
+    
+    // Use actual dates for timeline if available, otherwise fall back to estimated
+    const timelineDates = actualDates.length > 0 ? actualDates : [...actualDates, ...estimatedDates];
+    
+    if (timelineDates.length === 0) {
+      return (
+        <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
+          <h3 className="text-lg font-semibold text-gray-900 mb-4">Gantt Chart - Project Timeline</h3>
+          <div className="text-center py-8 text-gray-500">
+            No valid dates found in completed activities.
+          </div>
+        </div>
+      );
+    }
+    
+    const minDate = new Date(Math.min(...timelineDates.map(d => d.getTime())));
+    const maxDate = new Date(Math.max(...timelineDates.map(d => d.getTime())));
+    const totalDays = Math.max(1, Math.ceil((maxDate.getTime() - minDate.getTime()) / (1000 * 60 * 60 * 24)) + 1);
+    
+    // Sort activities by start date (or estimated start date)
     const sortedActivities = activitiesWithDates
-      .sort((a, b) => new Date(a.completionDate!).getTime() - new Date(b.completionDate!).getTime());
+      .map(progress => {
+        try {
+          const completionDate = new Date(progress.completionDate!);
+          const startDate = progress.startDate ? 
+            new Date(progress.startDate) : 
+            new Date(completionDate.getTime() - 7 * 24 * 60 * 60 * 1000);
+          
+          // Validate dates
+          if (isNaN(startDate.getTime()) || isNaN(completionDate.getTime())) {
+            return null;
+          }
+          
+          return { ...progress, estimatedStartDate: startDate, validCompletionDate: completionDate };
+        } catch (error) {
+          console.warn('Error processing progress dates:', progress, error);
+          return null;
+        }
+      })
+      .filter((progress): progress is NonNullable<typeof progress> => progress !== null)
+      .sort((a, b) => a.estimatedStartDate.getTime() - b.estimatedStartDate.getTime());
 
     return (
       <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
@@ -326,6 +386,41 @@ export function Reports() {
           </div>
         </div>
         
+        {/* Timeline Scale */}
+        <div className="mb-4">
+          <div className="flex items-center">
+            <div className="w-64 pr-4"></div>
+            <div className="flex-1 relative">
+              <div className="flex justify-between text-xs text-gray-500 mb-1">
+                <span>{format(minDate, 'MMM dd')}</span>
+                <span>{format(new Date(minDate.getTime() + (maxDate.getTime() - minDate.getTime()) / 2), 'MMM dd')}</span>
+                <span>{format(maxDate, 'MMM dd')}</span>
+              </div>
+              <div className="h-2 bg-gray-200 rounded">
+                <div className="h-full bg-gradient-to-r from-blue-200 to-blue-300 rounded"></div>
+              </div>
+            </div>
+            <div className="w-32 pl-4"></div>
+          </div>
+        </div>
+        
+        {/* Legend */}
+        <div className="mb-4 p-3 bg-gray-50 rounded-lg">
+          <div className="flex items-center justify-center space-x-8 text-xs text-gray-600">
+            <div className="flex items-center">
+              <div className="w-6 h-3 bg-gradient-to-r from-green-400 to-green-600 rounded mr-2"></div>
+              <span>With Start Date (Actual Duration)</span>
+            </div>
+            <div className="flex items-center">
+              <div className="w-6 h-3 bg-gradient-to-r from-yellow-400 to-yellow-600 rounded mr-2"></div>
+              <span>No Start Date (Estimated Timeline)</span>
+            </div>
+            <div className="text-gray-500">
+              <span className="italic">~Date</span> = Estimated
+            </div>
+          </div>
+        </div>
+        
         <div className="space-y-6">
           {/* Gantt Chart Visualization */}
           <div className="space-y-3">
@@ -334,42 +429,89 @@ export function Reports() {
               const activity = state.activities.find(a => a.id === progress.activityId);
               const subsystem = state.subsystems.find(s => s.id === progress.subsystemId);
               
-              // Use start date if available, otherwise estimate 7 days before completion
-              const startDate = progress.startDate ? new Date(progress.startDate) : new Date(new Date(progress.completionDate!).getTime() - 7 * 24 * 60 * 60 * 1000);
-              const endDate = new Date(progress.completionDate!);
+              const startDate = progress.estimatedStartDate;
+              const endDate = progress.validCompletionDate;
               
-              // Calculate position and width as percentages
-              const startOffset = ((startDate.getTime() - minDate.getTime()) / (1000 * 60 * 60 * 24)) / totalDays * 100;
-              const duration = Math.ceil((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)) + 1;
-              const barWidth = (duration / totalDays) * 100;
+              // Check if this is estimated or actual data
+              const hasActualStartDate = progress.startDate != null;
+              
+              // Calculate actual duration (inclusive of both start and end dates)
+              const actualDuration = hasActualStartDate ? 
+                Math.max(1, Math.floor((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)) + 1) :
+                null;
+              
+              // For activities without start dates, position them more logically
+              let displayStartDate, displayEndDate;
+              if (hasActualStartDate) {
+                displayStartDate = startDate;
+                displayEndDate = endDate;
+              } else {
+                // For estimated activities, show them at the end of timeline with reasonable duration
+                displayEndDate = endDate;
+                displayStartDate = new Date(endDate.getTime() - 6 * 24 * 60 * 60 * 1000); // 6 days before completion
+              }
+              
+              // Ensure dates are within timeline bounds
+              const clampedStartDate = new Date(Math.max(displayStartDate.getTime(), minDate.getTime()));
+              const clampedEndDate = new Date(Math.min(displayEndDate.getTime(), maxDate.getTime()));
+              
+              // Calculate position and width as percentages relative to the timeline
+              const startOffset = Math.max(0, ((clampedStartDate.getTime() - minDate.getTime()) / (1000 * 60 * 60 * 24)) / totalDays * 100);
+              const endOffset = Math.min(100, ((clampedEndDate.getTime() - minDate.getTime()) / (1000 * 60 * 60 * 24)) / totalDays * 100);
+              
+              // Calculate actual duration in days for width calculation
+              const durationDays = Math.max(1, Math.ceil((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)) + 1);
+              
+              // For activities with actual start dates, calculate width based on actual duration
+              // For estimated activities, use a minimum width
+              let barWidth;
+              if (hasActualStartDate) {
+                // Width should be proportional to duration, but with reasonable minimum and maximum
+                barWidth = Math.max(3, Math.min(endOffset - startOffset, (durationDays / totalDays) * 100));
+              } else {
+                // For estimated activities, use a fixed small width
+                barWidth = Math.min(15, (7 / totalDays) * 100); // 7 days estimated width
+              }
+              
+              // Display duration - show actual if available, otherwise show "Est"
+              const displayDuration = hasActualStartDate ? `${actualDuration}d` : 'Est';
               
               return (
                 <div key={index} className="relative">
                   <div className="flex items-center mb-2">
-                    <div className="w-64 pr-4">
+                    <div className="w-64 pr-4 flex-shrink-0">
                       <div className="font-medium text-sm text-gray-900 truncate">{activity?.name}</div>
                       <div className="text-xs text-gray-600 truncate">
                         {project?.name} • {subsystem?.name}
                       </div>
                     </div>
-                    <div className="flex-1 relative h-8 bg-gray-100 rounded">
+                    <div className="flex-1 relative h-8 bg-gray-100 rounded overflow-hidden">
                       <div
-                        className="absolute h-6 bg-gradient-to-r from-green-400 to-green-600 rounded shadow-sm top-1"
+                        className={`absolute h-6 rounded shadow-sm top-1 transition-all duration-300 ${
+                          hasActualStartDate 
+                            ? 'bg-gradient-to-r from-green-400 to-green-600' 
+                            : 'bg-gradient-to-r from-yellow-400 to-yellow-600'
+                        }`}
                         style={{
                           left: `${startOffset}%`,
-                          width: `${Math.max(barWidth, 2)}%`
+                          width: `${barWidth}%`
                         }}
                       >
                         <div className="absolute inset-0 flex items-center justify-center">
-                          <span className="text-xs text-white font-medium">
-                            {duration}d
+                          <span className="text-xs text-white font-medium truncate px-1">
+                            {displayDuration}
                           </span>
                         </div>
                       </div>
                     </div>
-                    <div className="w-32 pl-4 text-xs text-gray-600">
-                      <div>{format(startDate, 'MMM dd')}</div>
+                    <div className="w-32 pl-4 text-xs text-gray-600 flex-shrink-0">
+                      <div className={hasActualStartDate ? '' : 'italic text-yellow-600'}>
+                        {hasActualStartDate ? format(startDate, 'MMM dd') : `~${format(startDate, 'MMM dd')}`}
+                      </div>
                       <div>{format(endDate, 'MMM dd')}</div>
+                      {hasActualStartDate && actualDuration && (
+                        <div className="text-xs text-green-600 font-medium">{actualDuration} days</div>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -405,68 +547,6 @@ export function Reports() {
               </div>
             </div>
           )}
-        </div>
-      </div>
-    );
-  };
-
-  const renderOldGanttChart = () => {
-    const { completedActivities, notStartedActivities } = getGanttData();
-
-    return (
-      <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
-        <h3 className="text-lg font-semibold text-gray-900 mb-4">Gantt Chart - Project Timeline</h3>
-        
-        <div className="space-y-4">
-          <div>
-            <h4 className="text-md font-medium text-green-700 mb-2">Completed Activities</h4>
-            <div className="space-y-2">
-              {completedActivities.map((progress, index) => {
-                const project = state.projects.find(p => p.id === progress.projectId);
-                const activity = state.activities.find(a => a.id === progress.activityId);
-                const subsystem = state.subsystems.find(s => s.id === progress.subsystemId);
-                
-                return (
-                  <div key={index} className="flex items-center p-3 bg-green-50 rounded-lg border border-green-200">
-                    <div className="flex-1">
-                      <div className="font-medium text-gray-900">{activity?.name}</div>
-                      <div className="text-sm text-gray-600">
-                        {project?.name} • {subsystem?.name}
-                      </div>
-                    </div>
-                    <div className="text-sm text-green-700">
-                      {progress.completionDate ? format(new Date(progress.completionDate), 'MMM dd, yyyy') : 'N/A'}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          <div>
-            <h4 className="text-md font-medium text-gray-700 mb-2">Not Started Activities</h4>
-            <div className="space-y-2">
-              {notStartedActivities.map((progress, index) => {
-                const project = state.projects.find(p => p.id === progress.projectId);
-                const activity = state.activities.find(a => a.id === progress.activityId);
-                const subsystem = state.subsystems.find(s => s.id === progress.subsystemId);
-                
-                return (
-                  <div key={index} className="flex items-center p-3 bg-gray-50 rounded-lg border border-gray-200">
-                    <div className="flex-1">
-                      <div className="font-medium text-gray-900">{activity?.name}</div>
-                      <div className="text-sm text-gray-600">
-                        {project?.name} • {subsystem?.name}
-                      </div>
-                    </div>
-                    <div className="text-sm text-gray-500">
-                      Not Started
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
         </div>
       </div>
     );
